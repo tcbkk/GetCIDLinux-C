@@ -1,0 +1,21 @@
+[Unit]
+Description=GetCID GUI (GTK3)
+After=graphical.target
+Wants=graphical.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/getcid-linux
+Environment=HOME=/home/ubuntu
+# xrdp + Xorg 环境：DISPLAY 与 XAUTHORITY 按自己的桌面改
+Environment=DISPLAY=:10.0
+Environment=XAUTHORITY=/home/ubuntu/.Xauthority
+ExecStart=/opt/getcid-linux/getcid-gui
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+
+[Install]
+WantedBy=graphical.target

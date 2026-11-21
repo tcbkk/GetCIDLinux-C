@@ -1,0 +1,21 @@
+[Unit]
+Description=GetCID daemon (CID fetcher)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=getcid
+Group=getcid
+WorkingDirectory=/opt/serverclient01
+Environment=HOME=/opt/serverclient01
+ExecStart=/opt/serverclient01/getcid --config /opt/serverclient01/appsettings.json
+Restart=always
+RestartSec=5
+# 二进制放 /opt/serverclient01，写权限也只给这个目录
+ProtectSystem=full
+ReadWritePaths=/opt/serverclient01
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

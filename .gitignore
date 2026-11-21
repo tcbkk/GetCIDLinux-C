@@ -1,0 +1,25 @@
+# 编译产物
+build/
+*.o
+*.a
+*.so
+
+# 运行期数据（含 token，绝不入库）
+vs_tokens.json
+*.bak-*
+.mscookies_*.dat
+prompt/request.txt
+prompt/answer.txt
+logs/
+instances/*/vs_tokens.json
+instances/*/logs/
+config.json
+appsettings.json
+
+# 打包/临时
+*.zip
+*.tgz
+*.tar.gz
+mslogin-*.html
+*.png
+!.github/**

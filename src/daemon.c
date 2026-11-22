@@ -133,6 +133,8 @@ int daemon_main(int argc, char **argv) {
     long long last_login_try = 0;
     long long login_backoff_ms = 60000;
     int login_fails = 0;
+    int login_parked = 0;                 /* 连续失败后熔断：静默期内不再尝试 */
+    long long park_until = 0;
     char last_code[64] = "";
     int device_retry_at = 0;
 
@@ -220,7 +222,12 @@ int daemon_main(int argc, char **argv) {
             continue;
         }
 
-        if (tm_healthy(&A->tm) && !ms_has_pending(A)) continue;
+        if (tm_healthy(&A->tm) && !ms_has_pending(A)) {
+            login_fails = 0;
+            login_parked = 0;
+            continue;
+        }
+        if (login_parked && platform_uptime_ms() < park_until) continue;
 
         /* 需要登录：等人工的会话先应答，否则重新走一次密码登录。
            失败就指数退避（1→2→5→10→20 分钟）：微软对短时间内反复登录会甩
@@ -235,6 +242,14 @@ int daemon_main(int argc, char **argv) {
                 login_backoff_ms = 60000LL << (login_fails - 1);
                 if (login_backoff_ms > 1200000LL) login_backoff_ms = 1200000LL;
                 log_print("[守护] 登录未完成，%lld 秒后再试", login_backoff_ms / 1000);
+                /* 账号被拒（invalid_grant / 锁定 / 风控）时反复登录会把冷却期拖长：
+                   连续 3 次失败就熔断，静默 6 小时只探测一次；人工登录成功或重启服务即恢复 */
+                if (login_fails >= 3) {
+                    login_parked = 1;
+                    park_until = platform_uptime_ms() + 6LL * 3600 * 1000;
+                    login_fails = 0;
+                    log_err("[守护] 连续 3 次登录失败，判定账号需人工处理：熔断静默 6 小时，不再反复尝试");
+                }
             } else {
                 login_fails = 0;
                 login_backoff_ms = 60000;

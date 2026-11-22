@@ -27,6 +27,8 @@
 #define MSL_RETRY_AUTH_MAX (4 * 3600)
 #define MSL_RETRY_NET     60              /* 网络类失败首次重试间隔（秒） */
 #define MSL_RETRY_NET_MAX 600
+#define MSL_AUTH_STOP     3               /* 连续认证失败几次就熔断 */
+#define MSL_STOP_WAIT     (6 * 3600)      /* 熔断后静默 6 小时，再低频探测一次 */
 
 /* ---------- 动态字符串缓冲 ---------- */
 typedef struct { char *p; size_t len, cap; } sbuf;
@@ -2481,6 +2483,9 @@ int ms_has_pending(app_state *a) {
 typedef struct {
     app_state *a;
     char cfg_path[256];
+    int stop_auth;    /* 已判定账号需人工：静默中 */
+    long stop_at;     /* 上次提示时间，避免刷日志 */
+    long park_until;  /* 静默到何时 */
 } rl_ctx;
 static rl_ctx RL[MAX_INST];
 
@@ -2546,6 +2551,28 @@ static void *relogin_thread(void *arg) {
         pthread_mutex_unlock(&a->tm.mu);
         if (!has_tok) continue;   /* 从未登录过：交给人工，不自动登 */
 
+        /* 账号被微软判失效（invalid_grant / 锁定 / 风控）时反复自动登录只会把冷却期拖长：
+           连续失败达到阈值就熔断，静默期内一次都不试；人工登录成功则立刻恢复续期 */
+        if (ctx->stop_auth) {
+            if (tm_healthy(&a->tm)) {
+                ctx->stop_auth = 0;
+                fails_auth = 0;
+                log_print("[自动登录:%s] 授权已恢复（人工登录成功），重新接管自动重登", a->cfg.client_name);
+            } else if (time(NULL) >= ctx->park_until) {
+                ctx->stop_auth = 0;
+                fails_auth = 0;
+                log_print("[自动登录:%s] 静默期结束，做一次低频探测（再失败就继续静默 %d 小时）",
+                          a->cfg.client_name, MSL_STOP_WAIT / 3600);
+            } else {
+                if (time(NULL) - ctx->stop_at >= 600) {
+                    ctx->stop_at = time(NULL);
+                    log_print("[自动登录:%s] 账号需人工处理，静默中（还剩 %ld 分钟才探测一次）",
+                              a->cfg.client_name, (long)(ctx->park_until - time(NULL)) / 60);
+                }
+                continue;
+            }
+        }
+
         int age = iso_age_sec(obtained);
         int due = broken || (age >= MSL_RELOGIN_AT);
         if (!due) continue;
@@ -2576,6 +2603,13 @@ static void *relogin_thread(void *arg) {
             for (int i = 1; i < fails_auth && d < MSL_RETRY_AUTH_MAX; i++) d *= 2;
             if (d > MSL_RETRY_AUTH_MAX) d = MSL_RETRY_AUTH_MAX;
             next_try = time(NULL) + d;
+            if (fails_auth >= MSL_AUTH_STOP && !ctx->stop_auth) {
+                ctx->stop_auth = 1;
+                ctx->stop_at = time(NULL);
+                ctx->park_until = time(NULL) + MSL_STOP_WAIT;
+                log_err("[自动登录:%s] 连续 %d 次认证失败，判定账号需人工处理：熔断静默 %d 小时，不再反复登录",
+                        a->cfg.client_name, fails_auth, MSL_STOP_WAIT / 3600);
+            }
             continue;
         }
         if (time(NULL) < next_try) continue;
@@ -2611,6 +2645,13 @@ static void *relogin_thread(void *arg) {
                 log_err("[自动登录:%s] 失败：%s；%ld 分钟后再试", a->cfg.client_name, err, d / 60);
             }
             next_try = time(NULL) + d;
+            if (fails_auth >= MSL_AUTH_STOP && !ctx->stop_auth) {
+                ctx->stop_auth = 1;
+                ctx->stop_at = time(NULL);
+                ctx->park_until = time(NULL) + MSL_STOP_WAIT;
+                log_err("[自动登录:%s] 连续 %d 次认证失败，判定账号需人工处理：熔断静默 %d 小时，不再反复登录",
+                        a->cfg.client_name, fails_auth, MSL_STOP_WAIT / 3600);
+            }
         }
     }
     return NULL;

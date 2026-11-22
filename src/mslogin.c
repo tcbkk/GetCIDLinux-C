@@ -2530,7 +2530,7 @@ static void *relogin_thread(void *arg) {
     for (;;) {
         sleep(20);
         if (g_stop) break;
-        if (strcmp(a->cfg.mode, "account") != 0) continue;
+        if (strcasecmp(a->cfg.mode, "account") != 0) continue;
         /* 设备码模式不走网页登录（浏览器里由人完成密码/2FA） */
         if (strcmp(a->cfg.login, "device") == 0) continue;
 

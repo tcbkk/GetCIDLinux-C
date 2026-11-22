@@ -145,6 +145,9 @@ int config_load(void) {
         if (!a->cfg.login[0])
             snprintf(a->cfg.login, sizeof a->cfg.login,
                      (a->cfg.account[0] && a->cfg.password[0]) ? "password" : "device");
+        /* 配置里可能写成 "Account"/"Password":统一小写，否则自动重登的比较会静默失败 */
+        for (char *q = a->cfg.mode; *q; q++) *q = (char)tolower((unsigned char)*q);
+        for (char *q = a->cfg.login; *q; q++) *q = (char)tolower((unsigned char)*q);
         fix_paths(a);
         /* 启动时就把 token 装进管理器：不然 panel 里账号/token 状态是空的，
            第一次连接会误报「refresh_token 为空」 */

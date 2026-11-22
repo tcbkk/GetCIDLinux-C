@@ -65,6 +65,21 @@ static int tcp_connect(const char *host, const char *port, int timeout_s) {
     }
     int one = 1;
     setsockopt(s, IPPROTO_TCP, TCP_NODELAY, &one, sizeof one);
+
+    /* TCP keepalive：WS 心跳只能发现"对端主动断"，NAT/防火墙静默丢表时
+       要靠内核探测包才能及时判定死连接（30s 空闲 + 10s 间隔 + 3 次探测）。 */
+    {
+        int ka = 1;
+        setsockopt(s, SOL_SOCKET, SO_KEEPALIVE, &ka, sizeof ka);
+#ifdef TCP_KEEPIDLE
+        {
+            int idle = 30, intvl = 10, cnt = 3;
+            setsockopt(s, IPPROTO_TCP, TCP_KEEPIDLE,  &idle,  sizeof idle);
+            setsockopt(s, IPPROTO_TCP, TCP_KEEPINTVL, &intvl, sizeof intvl);
+            setsockopt(s, IPPROTO_TCP, TCP_KEEPCNT,   &cnt,   sizeof cnt);
+        }
+#endif
+    }
     return (int)s;
 }
 
@@ -74,6 +89,8 @@ static void mask_key(unsigned char *k) {
     for (int i = 0; i < 4; i++) k[i] = (unsigned char)((v >> (i * 7)) & 0xFF);
 }
 
+static int ws_last_err = 0;
+
 static int send_all(SOCKET s, const void *buf, size_t n) {
     const char *p = buf;
     while (n > 0) {
@@ -81,9 +98,10 @@ static int send_all(SOCKET s, const void *buf, size_t n) {
         if (r == SOCKET_ERROR) {
             int e = WSAGetLastError();
             if (e == WSAEINTR) continue;
+            ws_last_err = e;
             return -1;
         }
-        if (r == 0) return -1;
+        if (r == 0) { ws_last_err = -1; return -1; }
         p += r; n -= (size_t)r;
     }
     return 0;
@@ -92,11 +110,12 @@ static int send_all(SOCKET s, const void *buf, size_t n) {
 static int recv_some(SOCKET s, void *buf, size_t n) {
     for (;;) {
         int r = recv(s, (char *)buf, (int)n, 0);
-        if (r > 0) return r;
-        if (r == 0) return 0;
+        if (r > 0) { ws_last_err = 0; return r; }
+        if (r == 0) { ws_last_err = 0; return 0; }
         int e = WSAGetLastError();
         if (e == WSAEINTR) continue;
-        if (e == WSAETIMEDOUT || e == WSAEWOULDBLOCK) return -2; /* 超时 */
+        if (e == WSAETIMEDOUT || e == WSAEWOULDBLOCK) { ws_last_err = e; return -2; } /* 超时 */
+        ws_last_err = e;
         return -1;
     }
 }
@@ -246,7 +265,14 @@ int ws_read_text(ws_conn *w, char *buf, size_t bufsz, int timeout_s) {
         unsigned char h[2];
         int r = read_exact(w->sock, h, 2);
         if (r == -3) return 0;          /* 空闲：调用方 ping 探活后继续读 */
-        if (r <= 0) { log_err("[ws] 帧头读取失败 r=%d", r); return -1; }
+        if (r <= 0) {
+            if (r == 0)
+                log_err("[ws] 对端关闭连接（EOF），无 close 帧");
+            else
+                log_err("[ws] 帧头读取失败 r=%d errno=%d(%s)", r, ws_last_err,
+                        ws_last_err ? strerror(ws_last_err) : "?");
+            return -1;
+        }
         int fin = h[0] & 0x80;
         unsigned char opcode = h[0] & 0x0F;
         int masked = h[1] & 0x80;

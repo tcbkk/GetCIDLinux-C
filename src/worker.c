@@ -33,6 +33,7 @@ static void msg_init(client_message *m, const char *from) {
     snprintf(m->to, sizeof m->to, "server");
     m->lang = 1;
     m->user_type = 4;
+    m->show_price = 1;   /* 缺省与 ReceivedData 一致：显示价格 */
     snprintf(m->from, sizeof m->from, "%s", from);
 }
 
@@ -54,12 +55,12 @@ static int send_msg(app_state *a, client_message *m) {
     snprintf(plain, sizeof plain,
         "{\"clientId\":\"\",\"type\":\"%s\",\"text\":\"%s\",\"iid\":\"%s\",\"cid\":\"%s\","
          "\"from\":\"%s\",\"to\":\"%s\",\"lang\":%d,\"userType\":%d,\"UserFrom\":0,"
-         "\"LanguageId\":0,\"showPrice\":1,\"fromId\":\"%s\",\"groupId\":\"%s\","
+         "\"LanguageId\":0,\"showPrice\":%d,\"fromId\":\"%s\",\"groupId\":\"%s\","
          "\"conversationId\":\"%s\",\"isTopic\":%s,\"topicId\":%lld,"
          "\"callStatus\":\"%s\",\"getStatus\":\"%s\",\"status\":false,"
          "\"startTime\":\"0001-01-01T00:00:00\",\"result\":\"%s\"}",
         m->type, esc_text, m->iid, m->cid, esc_from, m->to, m->lang,
-        m->user_type, esc_fromid, esc_groupid, esc_convid,
+        m->user_type, m->show_price, esc_fromid, esc_groupid, esc_convid,
         m->is_topic ? "true" : "false", m->topic_id,
         m->call_status, m->get_status, m->result);
     if (!proto_encrypt(plain, et, sizeof et)) {
@@ -394,6 +395,8 @@ static void *reader_main(void *arg) {
         parse_json_str(plain, "result", m.result, sizeof m.result);
         m.lang = parse_json_int(plain, "lang", 0);
         m.user_type = parse_json_int(plain, "userType", 0);
+        /* showPrice 必须回显派单请求里的值：服务端按它决定回包显不显示价格（0=群/用户关了价格显示）。 */
+        m.show_price = parse_json_int(plain, "showPrice", 1);
         parse_json_str(plain, "fromId", m.from_id, sizeof m.from_id);
         parse_json_str(plain, "groupId", m.group_id, sizeof m.group_id);
         parse_json_str(plain, "conversationId", m.conversation_id, sizeof m.conversation_id);

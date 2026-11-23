@@ -18,6 +18,7 @@ typedef struct {
     char result[64];
     int  lang;
     int  user_type;
+    int  show_price;              /* 派单请求里的 showPrice，回包必须原样回显（0=用户关了价格显示） */
     char from_id[128];
     char group_id[128];
     char conversation_id[128];
